@@ -79,17 +79,17 @@ type placeDict struct {
 
 // updateSigns ensures that Vim is updated with signs corresponding to the
 // diagnostics fixes.
-func (v *vimstate) updateSigns(fixes []types.Diagnostic, force bool) error {
+func (v *vimstate) updateSigns(force bool) error {
 	if v.config.QuickfixSigns == nil || !*v.config.QuickfixSigns {
 		return nil
 	}
-	v.diagnosticsChangedLock.Lock()
-	work := v.diagnosticsChangedSigns
-	v.diagnosticsChangedSigns = false
-	v.diagnosticsChangedLock.Unlock()
+	fixesRef := v.diagnostics()
+	work := v.lastDiagnosticsChangedSigns != fixesRef
+	v.lastDiagnosticsChangedSigns = fixesRef
 	if !force && !work {
 		return nil
 	}
+	fixes := *fixesRef
 
 	// We do this by batching a removal of all govim signs then a placing of all
 	// signs.

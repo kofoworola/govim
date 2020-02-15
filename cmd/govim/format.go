@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/govim/govim"
 	"github.com/govim/govim/cmd/govim/config"
@@ -14,12 +15,24 @@ import (
 )
 
 func (v *vimstate) formatCurrentBuffer(args ...json.RawMessage) (err error) {
-	// we are an autocmd endpoint so we need to be told the current
-	// buffer number via <abuf>
-	currBufNr := v.ParseInt(args[0])
-	b, ok := v.buffers[currBufNr]
+	bufnr := v.ParseInt(args[0])
+	b, ok := v.buffers[bufnr]
 	if !ok {
-		return fmt.Errorf("failed to resolve buffer %v", currBufNr)
+		return fmt.Errorf("failed to resolve buffer %v", bufnr)
+	}
+	if !b.Loaded {
+		// This happens in the case that we are writing an unnamed buffer to a file
+		// per https://github.com/vim/vim/issues/5655. Hence we force load the buffer
+		var nbinfo bufReadDetails
+		v.Parse(v.ChannelExpr(exprAutocmdCurrBufInfo), &nbinfo)
+		v.bufWinEnterImpl(nbinfo)
+	}
+	b, err = v.getLoadedBuffer(v.ParseInt(args[0]))
+	if err != nil {
+		return err
+	}
+	if !bufferOfInterestToGopls(b) {
+		return nil
 	}
 	tool := v.config.FormatOnSave
 	if tool == nil {
@@ -38,9 +51,9 @@ func (v *vimstate) goimportsCurrentBufferRange(flags govim.CommandFlags, args ..
 
 func (v *vimstate) formatCurrentBufferRange(mode config.FormatOnSave, flags govim.CommandFlags, args ...string) error {
 	vp := v.Viewport()
-	b, ok := v.buffers[vp.Current.BufNr]
-	if !ok {
-		return fmt.Errorf("failed to resolve current buffer %v", vp.Current.BufNr)
+	b, err := v.getLoadedBuffer(vp.Current.BufNr)
+	if err != nil {
+		return err
 	}
 	return v.formatBufferRange(b, mode, flags)
 }
@@ -72,7 +85,7 @@ func (v *vimstate) formatBufferRange(b *types.Buffer, mode config.FormatOnSave, 
 		}
 	}
 
-	if mode == config.FormatOnSaveGoImports || mode == config.FormatOnSaveGoImportsGoFmt {
+	if strings.HasSuffix(b.Name, ".go") && (mode == config.FormatOnSaveGoImports || mode == config.FormatOnSaveGoImportsGoFmt) {
 		params := &protocol.CodeActionParams{
 			TextDocument: b.ToTextDocumentIdentifier(),
 		}
